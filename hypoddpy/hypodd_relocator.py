@@ -114,6 +114,12 @@ class HypoDDRelocator(object):
 
         # Configure the paths.
         self._configure_paths()
+        
+        # Set compiler options
+        self.compile_param = {"MAXEVE0": 200,
+                              "MAXDATA": 300000,
+                              "MAXDATA0": 60000,
+                               "MAXCL": 20}
 
     def start_relocation(self, output_event_file,
                          output_cross_correlation_file=None,
@@ -207,6 +213,27 @@ class HypoDDRelocator(object):
                 continue
             self.waveform_files.append(waveform_file)
 
+    def modify_compile_parameters(self, MAXDATA=None, MAXDATA0=None, MAXEVE0=None,
+        MAXLAY=None, MAXCL=None):
+        """
+        Modify parameters in hypoDD.inc
+        
+        Does not allow modification of MAXEVE or MAXSTA, which are calculated
+        by the program based on the data
+        """
+        print('start')
+        if MAXDATA:
+            self.compile_param['MAXDATA'] = MAXDATA
+        if MAXDATA0:
+            self.compile_param['MAXDATA0'] = MAXDATA0
+        if MAXEVE0:
+            self.compile_param['MAXEVE0'] = MAXEVE0
+        if MAXLAY:
+            self.compile_param['MAXLAY'] = MAXLAY
+        if MAXCL:
+            self.compile_param['MAXCL'] = MAXCL
+
+
     def set_forced_configuration_value(self, key, value):
         """
         Force a configuration key to a certain value. This will overwrite any
@@ -288,11 +315,13 @@ class HypoDDRelocator(object):
             with open(serialized_station_file, "r") as open_file:
                 self.stations = json.load(open_file)
                 return
-        self.log("Parsing stations...")
+        self.log("Parsing stations ({:d} station files) ...".format(
+            len(self.station_files)))
         self.stations = {}
         for station_file in self.station_files:
             if stations_XSEED:
                 p = Parser(station_file)
+                print(p)
                 # In theory it would be enough to parse Blockette 50, put faulty
                 # SEED files do not store enough information in them, so
                 # blockettes 52 need to be parsed...
@@ -317,10 +346,10 @@ class HypoDDRelocator(object):
                             "latitude": sta.latitude,
                             "longitude": sta.longitude,
                             "elevation": int(round(sta.elevation))}
-                        
-        with open(serialized_station_file, "w") as open_file:
-            json.dump(self.stations, open_file)
-        self.log("Done parsing stations.")
+        if len(self.stations) > 0:                
+            with open(serialized_station_file, "w") as open_file:
+                json.dump(self.stations, open_file)
+        self.log(f"Done parsing stations ({len(self.stations)} stations).")
 
     def _write_station_input_file(self):
         """
@@ -647,11 +676,8 @@ class HypoDDRelocator(object):
                                       log_function=logfunc)
             compiler.configure(MAXEVE=len(self.events) + 30,
                                #MAXEVE0=len(self.events) + 30,
-                               MAXEVE0=200,
-                               MAXDATA=3000000,
-                               MAXDATA0=60000,
-                               MAXCL=20,
-                               MAXSTA=len(self.stations) + 10)
+                               MAXSTA=len(self.stations) + 10,
+                               **self.compile_param)
             compiler.make()
 
     def _run_hypodd(self):
@@ -1117,7 +1143,7 @@ class HypoDDRelocator(object):
                                     # msg += err.message
                                     self.log(msg, level="error")
                                     self.cc_results.setdefault(pick_1['id'], {})[pick_2['id']] = msg
-                                    continue
+                                continue
                         all_cross_correlations.append((pick2_corr,
                                                cross_corr_coeff, channel_weight))
                     if len(all_cross_correlations) == 0:
