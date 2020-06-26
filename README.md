@@ -20,11 +20,12 @@ If yes, consider citing this software! Just click on this button here to get all
 
 ### Requirements
 
-* Python 2.6 or 2.7
+* Python 3.6+
 * NumPy
 * matplotlib
 * progressbar
-* [ObsPy](http://obspy.org) (Tested on 1.0.2)
+* cartopy
+* [ObsPy](http://obspy.org) (Tested on 1.2.0)
 
 ### Installation
 hypoDDpy currently works with HypoDD 2.1b which you will have to acquire
@@ -42,7 +43,8 @@ pip install -v -e .
 python setup.py develop
 ```
 
-The in-place install is a good idea because there is a chance that you will have to adjust the source code.
+The in-place install is a good idea because there is a chance that you will
+have to adjust the source code.
 
 
 ### Running it
@@ -87,4 +89,39 @@ relocator.setup_velocity_model(
 
 # Start the relocation with the desired output file.
 relocator.start_relocation(output_event_file="relocated_events.xml")
+
+# Plot events with a slightly better presentation than the default plots
+# Have to use "replace_scatter_with_plot" until cartopy 0.18.1 comes out
+relocator.plot_events(coastlines='10m', replace_scatter_with_plot=True)
+```
+
+You can also plot the results after the fact, using the output event file:
+```python
+from hypoddpy import HypoDDPlotter
+from obspy.core.event import read_events
+
+catalog_file = 'relocated_events.xml'
+map_extent=[45.15, 45.75, -13, -12.6]
+depth_extent=[0, 50]
+
+print(f'Reading catalog file {catalog_file}...', end='', flush=True)
+cat = read_events(catalog_file, 'QUAKEML')
+print(f'read {len(cat)} events')
+obj = HypoDDPlotter(cat, map_extent, depth_extent, coastlines='10m',
+                    replace_scatter_with_plot=True)
+obj.plot_events(file_base='main_swarm_EW',
+                polygon=[[45.3, -12.78],
+                         [45.3, -12.82],
+                         [45.5, -12.82],
+                         [45.5, -12.78]])
+obj.plot_events(file_base='main_swarm_NS',
+                polygon=[[45.39, -12.65],
+                         [45.39, -12.95],
+                         [45.42, -12.95],
+                         [45.42, -12.65]])
+obj.plot_events(file_base='secondary_swarm',
+                polygon=[[45.50, -12.70],
+                         [45.65, -12.80],
+                         [45.65, -12.90],
+                         [45.50, -12.80]])
 ```

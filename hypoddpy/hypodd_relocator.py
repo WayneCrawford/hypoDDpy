@@ -18,6 +18,7 @@ import sys
 import warnings
 
 from .hypodd_compiler import HypoDDCompiler
+from .hypodd_plotter import HypoDDPlotter
 
 
 # Global variable for StationXML or XSEED inventory files (WCC)
@@ -31,7 +32,7 @@ class HypoDDRelocator(object):
     def __init__(self, working_dir, cc_time_before, cc_time_after, cc_maxlag,
                  cc_filter_min_freq, cc_filter_max_freq, cc_p_phase_weighting,
                  cc_s_phase_weighting, cc_min_allowed_cross_corr_coeff,
-                 supress_warning_traces=False, shift_stations=False):
+                 supress_warning_traces=False, shift_stations=True):
         """
         :param working_dir: The working directory where all temporary and final
             files will be placed.
@@ -63,9 +64,11 @@ class HypoDDRelocator(object):
         :param supress_warning_traces: Supress warning about traces not being
             found (useful if you mix stations with different types of
             component codes (ZNE versus 123, for example))
-        :param shift_stations: Shift station (and model) depths so that
-            the deepest station is at elev=0 (useful for networks with negative
-            elevations (HypoDD can't handle them)
+        :param shift_stations: If any of the stations have elevation < 0, shift
+            all stations so that the deepest station is at elev=0 (outherwise,
+            HypoDD will simply shift any station with negative elevation to 
+            elev=0).  Model is shifted correspondingly and origins in the
+            output QuakeML model are shifted back
         """
         self.working_dir = working_dir
         if not os.path.exists(working_dir):
@@ -98,7 +101,9 @@ class HypoDDRelocator(object):
         self.cc_results = {}
         self.supress_warnings = {'no_matching_trace': supress_warning_traces}
         self.shift_stations = shift_stations
-        self.min_elev = 0  # Minimum station elevation (used for shifting)
+        self.min_elev = 0  # Minimum station elevation (used for shifting, 
+                           # only if shift_stations is True
+                           # and min(station elev)< 0
 
         # Setup logging.
         logging.basicConfig(level=logging.DEBUG,
@@ -272,6 +277,31 @@ class HypoDDRelocator(object):
             return
         self.forced_configuration_values[key] = value
 
+    def plot_events(self, map_extent=None, depth_extent=None,
+                    file_base='hypoDDpy', circle=None, polygon=None,
+                    coastlines=None, replace_scatter_with_plot=False):
+        """
+        Plot original and relocated events on a proportional map & cross-sects
+
+        :param map_extent: limits of map to plot [W, E, S, N].  If None, uses
+            limits of event lon,lats plus a small buffer
+        :param depth_extent: depth limits to plot [mindepth, maxdepth].  If
+            None, uses limits of event depths, plus a small buffer
+        :param coastlines: The name of a NaturalEarth ('10m', '50m', '110m')
+            or GSHSS ('crude', 'low', 'intermediate', 'high', 'full') coastlines
+            dataset to use.
+        :param file_base: start of output filename
+        :param polygon: list of [lon, lat]s defining a polygon to highlight
+        :param circle: [lon, lat, radius_km] of a circle to highlight (will
+            be ignored if polygon defined)
+        :param replace_scatter_with_plot: replace matplotlib.pyplot.scatter
+            with matplotlib.pyplot.plot to avoid cartopy 0.18.0 bug
+        """
+        obj = HypoDDPlotter(self.output_catalog, map_extent, depth_extent,
+                            coastlines, replace_scatter_with_plot, quiet=True)
+        fname_orig, fname_reloc = obj.plot_events(file_base, circle, polygon)
+        self.log(f'plots saved to {fname_orig} and {fname_reloc}')
+
     def _configure_paths(self):
         """
         Central place to setup up all the paths needed for running HypoDD.
@@ -349,6 +379,13 @@ class HypoDDRelocator(object):
         if len(self.stations) > 0:                
             with open(serialized_station_file, "w") as open_file:
                 json.dump(self.stations, open_file)
+            if self.shift_stations:
+                min_elev = min([s['elevation'] for s in self.stations.values()])
+                if min_elev < 0:
+                    self.min_elev = math.floor(min_elev/10)*10
+                    self.log('station.dat elevs will be shifted up by '
+                             f'{-min_elev:g} m',
+                             level='warning')
         self.log(f"Done parsing stations ({len(self.stations)} stations).")
 
     def _write_station_input_file(self):
@@ -364,12 +401,10 @@ class HypoDDRelocator(object):
             self.log("station.dat input file already exists.")
             return
         station_strings = []
-        if self.shift_stations:
-            self.min_elev = min([s['elevation'] for s in self.stations.values()])
 
         for key, value in self.stations.items():
             station_strings.append("%-7s %9.5f %10.5f %5i" % (key, value["latitude"],
-                value["longitude"], value["elevation"]-self.min_elev))
+                value["longitude"], value["elevation"] - self.min_elev))
         station_string = "\n".join(station_strings)
         with open(station_dat_file, "w") as open_file:
             open_file.write(station_string)
@@ -1230,24 +1265,31 @@ class HypoDDRelocator(object):
             self.log("hypoDD.inp input file already exists.")
             return
         # Use this way of defining the string to avoid leading whitespaces.
-        hypodd_inp = "\n".join([
-                               "hypoDD_2",
-                               "dt.cc",
-                               "dt.ct",
-                               "event.sel",
-        "station.sel",
-        "",
-        "",
-        "hypoDD.sta",
-        "hypoDD.res",
-        "hypoDD.src",
-        "{IDAT} {IPHA} {DIST}",
-        "{OBSCC} {OBSCT} {MINDS} {MAXDS} {MAXGAP}",
-        "{ISTART} {ISOLV} {IAQ} {NSET}",
-        "{DATA_WEIGHTING_AND_REWEIGHTING}",
-        "{FORWARD_MODEL}",
-        "{CID}",
-        "{ID}"])
+        hypodd_inp = "\n".join(
+            ["hypoDD_2",
+             "dt.cc",
+             "dt.ct",
+             "event.sel",
+             "station.sel",
+             "",
+             "",
+             "hypoDD.sta",
+             "hypoDD.res",
+             "hypoDD.src",
+             "* IDAT IPHA DIST",
+             "  {IDAT:4d} {IPHA:4d} {DIST:4d}",
+             "* OBSCC OBSCT MINDS MAXDS MAXGAP",
+             " {OBSCC:5d} {OBSCT:5d} {MINDS:5d} {MAXDS:5d} {MAXGAP:6d}",
+             "*  ISTART ISOLV IAQ NSET",
+             " {ISTART:6d} {ISOLV:5d} {IAQ:3d} {NSET:4d}",
+             "* NITER WTCCP WTCCS WRCC WDCC WTCTP WTCTS WRCT WDCT DAMP",
+             "{DATA_WEIGHTING_AND_REWEIGHTING}",
+             "* IMOD (0=hypoDD1, 1=1D P w/variable Vp/Vs, 4=station specific, 9=3D)",
+             "{FORWARD_MODEL}",
+             "* CID",
+             "  {CID}",
+             "* ID",
+             "  {ID}"])
         # Determine all the values.
         values = {}
         # Always set IDAT to 3
@@ -1269,12 +1311,16 @@ class HypoDDRelocator(object):
         # Least squares solution via conjugate gradients
         values["ISOLV"] = 2
         values["IAQ"] = 2
-        # Create the data_weighting and reweightig scheme. Currently static.
-        # Iterative 10 times for only cross correlated travel time data and
-        # then 10 times also including catalog data.
+        # Create the data_weighting and reweighting scheme. Currently static.
         iterations = [
-            "100 1 0.5 -999 -999 0.1 0.05 -999 -999 30",
-            "100 1 0.5 6 -999 0.1 0.05 6 -999 30"]
+             "    5    0.01  0.01  -9   -9  1.0   0.5   -9   -9    80",
+             "    5    0.01  0.01  -9   -9  1.0   0.5    6   20    80",
+             "    5    1.0   0.5   -9   20  0.01  0.005  6   20    90",
+             "    5    1.0   0.5    6   20  0.01  0.005  6   20    90",
+             "    5    1.0   0.5    6   10  0.01  0.005  6   20    90"]
+        # iterations = [
+        #     "10 1 0.5 -999 -999 0.1 0.05 -999 -999 30",
+        #     "10 1 0.5 6 -999 0.1 0.05 6 -999 30"]
         values["NSET"] = len(iterations)
         values["DATA_WEIGHTING_AND_REWEIGHTING"] = "\n".join(iterations)
         values["FORWARD_MODEL"] = self._get_forward_model_string()
@@ -1302,6 +1348,10 @@ class HypoDDRelocator(object):
             [(0.0, 3.77), (1.0, 4.64), (3.0, 5.34), (6.0, 5.75), (14.0, 6.0)]
 
         """
+        if self.shift_stations:
+            # Must parse station files before calculating velocity model
+            # in case there are negative elevations
+            self._parse_station_files()
         if model_type == "layered_p_velocity_with_constant_vp_vs_ratio":
             # Check the kwargs.
             if not "layer_tops" in kwargs:
@@ -1315,13 +1365,17 @@ class HypoDDRelocator(object):
             if len(layers) > 30:
                 msg = "Model must have <= 30 layers"
                 raise HypoDDException(msg)
-            depths = [str(_i[0]) for _i in layers]
+            if self.min_elev:
+                self.log('Decreasing hypoDD.inp model depths by '
+                         f'{-self.min_elev/1000:g} km to match station shift',
+                         level="warning")
+            depths = ['{:.2f}'.format(_i[0] + self.min_elev/1000.) for _i in layers]
             velocities = [str(_i[1]) for _i in layers]
             # Use imod 5 which allows for negative station elevations by using
             # straight rays.
             forward_model = [
-                "0",  # IMOD
-                "%i %.2f" % (len(layers), ratio),
+                "  0",  # IMOD
+                "  {:d} {:.2f}".format(len(layers), ratio),
                 " ".join(depths),
                 " ".join(velocities)]
             #forward_model = [ \
@@ -1362,6 +1416,10 @@ class HypoDDRelocator(object):
         for filename in self.event_files:
             cat += read_events(filename)
 
+        if self.min_elev:
+            self.log(f'shifting events down by {-self.min_elev:g} m '
+                     'to correct for station/model shift',
+                     level="warning")
         with open(hypodd_reloc, "r") as open_file:
             for line in open_file:
                 event_id, lat, lon, depth, _, _, _, _, _, _, year, month, \
@@ -1373,6 +1431,8 @@ class HypoDDRelocator(object):
                 lat, lon, depth = list(map(float, [lat, lon, depth]))
                 # Convert back to meters.
                 depth *= 1000.0
+                # Shift back down if there were negative station elevations
+                depth += self.min_elev
                 # event = res_id.getReferredObject()
                 event = res_id.get_referred_object()
                 # Create new origin.
