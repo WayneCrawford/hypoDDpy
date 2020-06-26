@@ -25,10 +25,8 @@ If yes, consider citing this software! Just click on this button here to get all
 * NumPy
 * matplotlib
 * progressbar
-<<<<<<< HEAD
 * cartopy
 =======
->>>>>>> 348f3b0d9439878198cf680e6e5bab8aa86cd8d3
 * [ObsPy](http://obspy.org) (Tested on 1.2.0)
 
 ### Installation
