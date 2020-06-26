@@ -1,7 +1,8 @@
 # hypoDDpy
 
 This a collection of tools to run
-[HypoDD](http://www.ldeo.columbia.edu/~felixw/hypoDD.html) by Felix Waldhauser.
+[HypoDD](http://www.ldeo.columbia.edu/~felixw/hypoDD.html) by Felix Waldhauser,
+updated by Wayne Crawford.
 
 It takes event files in the QuakeML format, station data in the SEED format and
 waveform data in any format ObsPy can read and does all the rest.
