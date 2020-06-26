@@ -26,7 +26,6 @@ If yes, consider citing this software! Just click on this button here to get all
 * matplotlib
 * progressbar
 * cartopy
-=======
 * [ObsPy](http://obspy.org) (Tested on 1.2.0)
 
 ### Installation
